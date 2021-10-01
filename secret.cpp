@@ -16,7 +16,6 @@ int main(int argc, char *argv[]) {
             printf("argument l\n");
             break;
         default:
-            printf("ziadny alebo zly argument");
             break;
         }
     }
