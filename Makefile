@@ -1,4 +1,4 @@
-CC=gcc
+CC=g++
 
-secret: secret.c
-	${CC} secret.c -o secret
+secret: secret.cpp
+	${CC} secret.cpp -o secret
