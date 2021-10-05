@@ -52,7 +52,7 @@ void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
     // change to what you want by setting ttl_val
     if (setsockopt(ping_sockfd, SOL_IP, IP_TTL, &ttl_val, sizeof(ttl_val)) != 0) {
         printf("\nSetting socket options to TTL failed!\n");
-        return;
+        exit(1);
     }
     else {
         printf("\nSocket set to TTL..\n");
@@ -61,32 +61,24 @@ void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
     // setting timeout of recv setting
     setsockopt(ping_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv_out, sizeof tv_out);
 
-    // send icmp packet in an infinite loop
-    while(pingloop) {
-        // flag is whether packet was sent or not
-        flag=1;
+    //filling packet
+    char *message = "ahojahasdfasfsagsojkapnspadnf";
+    bzero(&pckt, sizeof(pckt));
+    bcopy(message, &pckt.msg, strlen(message));
+    printf("%s\n", pckt.msg);
+    
+    pckt.hdr.type = ICMP_ECHO;
+    pckt.hdr.un.echo.id = getpid();
 
-        //filling packet
-        bzero(&pckt, sizeof(pckt));
-          
-        pckt.hdr.type = ICMP_ECHO;
-        pckt.hdr.un.echo.id = getpid();
-          
-        for (i = 0; i < sizeof(pckt.msg)-1; i++) {
-            pckt.msg[i] = i+'0';
-        }
+    pckt.hdr.un.echo.sequence = msg_count++;
+    pckt.hdr.checksum = checksum(&pckt, sizeof(pckt));
 
-        pckt.msg[i] = 0;
-        pckt.hdr.un.echo.sequence = msg_count++;
-        pckt.hdr.checksum = checksum(&pckt, sizeof(pckt));
+    usleep(PING_SLEEP_RATE);
 
-        usleep(PING_SLEEP_RATE);
-
-        //send packet
-        if (sendto(ping_sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*) ping_addr, sizeof(*ping_addr)) <= 0) {
-            printf("\nPacket Sending Failed!\n");
-            flag=0;
-        }    
+    //send packet
+    if (sendto(ping_sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*) ping_addr, sizeof(*ping_addr)) <= 0) {
+        printf("\nPacket Sending Failed!\n");
+        exit(1);
     }
 
     printf("Message count: %d\n", msg_count);
