@@ -1,4 +1,5 @@
 CC=g++
+TAGS=-fpermissive
 
 secret: secret.cpp
-	${CC} secret.cpp -o secret
+	${CC} ${TAGS} secret.cpp -o secret
