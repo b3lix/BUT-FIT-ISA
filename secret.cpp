@@ -7,9 +7,7 @@
 #define PING_SLEEP_RATE 1000000
 // Gives the timeout delay for receiving packets
 // in seconds
-#define RECV_TIMEOUT 1 
-
-int pingloop=1;
+#define RECV_TIMEOUT 1
 
 // ping packet structure
 struct ping_pkt {
@@ -32,11 +30,6 @@ unsigned short checksum(void *b, int len) {
     sum += (sum >> 16);
     result = ~sum;
     return result;
-}
-
-// Interrupt handler
-void intHandler(int dummy) {
-    pingloop=0;
 }
 
 // make a ping request
@@ -116,8 +109,6 @@ int main(int argc, char *argv[]) {
     char *ip_addr = argv[1];
 
     client_func(ip_addr);
-
-    signal(SIGINT, intHandler);//catching interrupt
 
     return 0;
 }
