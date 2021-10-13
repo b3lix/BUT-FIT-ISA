@@ -5,9 +5,8 @@
 #define PING_PKT_S 64
 // Automatic port number
 #define PING_SLEEP_RATE 1000000
-// Gives the timeout delay for receiving packets
-// in seconds
-#define RECV_TIMEOUT 1
+// buffer size in bytes for reading from file
+#define BUFFER_SIZE 16
 
 // ping packet structure
 struct ping_pkt {
@@ -34,28 +33,12 @@ unsigned short checksum(void *b, int len) {
 
 // make a ping request
 void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
-    int ttl_val=64, msg_count=0, i, flag=1;
+    int msg_count=0;
 
     struct ping_pkt pckt;
-    struct timeval tv_out;
-    tv_out.tv_sec = RECV_TIMEOUT;
-    tv_out.tv_usec = 0;
-
-    // set socket options at ip to TTL and value to 64,
-    // change to what you want by setting ttl_val
-    if (setsockopt(ping_sockfd, SOL_IP, IP_TTL, &ttl_val, sizeof(ttl_val)) != 0) {
-        printf("\nSetting socket options to TTL failed!\n");
-        exit(1);
-    }
-    else {
-        printf("\nSocket set to TTL..\n");
-    }
-
-    // setting timeout of recv setting
-    setsockopt(ping_sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv_out, sizeof tv_out);
 
     //filling packet
-    char *message = "ahojahasdfasfsagsojkapnspadnf";
+    char *message = "ahojahas";
     bzero(&pckt, sizeof(pckt));
     bcopy(message, &pckt.msg, strlen(message));
     printf("%s\n", pckt.msg);
@@ -65,8 +48,6 @@ void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
 
     pckt.hdr.un.echo.sequence = msg_count++;
     pckt.hdr.checksum = checksum(&pckt, sizeof(pckt));
-
-    usleep(PING_SLEEP_RATE);
 
     //send packet
     if (sendto(ping_sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*) ping_addr, sizeof(*ping_addr)) <= 0) {
@@ -90,23 +71,44 @@ void client_func(char *ip_addr) {
     sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if(sockfd<0) {
         printf("\nSocket file descriptor not received!!\n");
-        return;
+        exit(1);
     }
     else {
         printf("\nSocket file descriptor %d received\n", sockfd);
     }
 
-    //send pings continuously
     send_ping(sockfd, &addr_con, ip_addr);
 }
 
 int main(int argc, char *argv[]) {
 
-    if(argc!=2) {
-        printf("\nFormat %s <address>\n", argv[0]);
-        return 0;
+    // if(argc!=2) {
+    //     printf("\nFormat %s <address>\n", argv[0]);
+    //     return 0;
+    // }
+
+    FILE *fptr;
+    if ((fptr = fopen(argv[1], "rb")) == NULL) {
+        printf("File %s loading failed!\n", argv[1]);
     }
-    char *ip_addr = argv[1];
+    
+    /* Get the number of bytes */
+    fseek(fptr, 0L, SEEK_END);
+    long file_numbytes = ftell(fptr);
+    fseek(fptr, 0L, SEEK_SET);
+    
+    for (int i = 0; i <= file_numbytes; i++) {
+        unsigned char buffer[BUFFER_SIZE+1] = {0};
+        int count = fread(buffer, 1, BUFFER_SIZE, fptr);
+        printf("Data read from file: %s \n", buffer);
+        printf("Elements read: %d\n", count);
+        i += BUFFER_SIZE;
+    }
+    
+    fclose(fptr);
+
+    
+    char *ip_addr = argv[2];
 
     client_func(ip_addr);
 
