@@ -2,7 +2,7 @@
 
 // Define the Packet Constants
 // ping packet size
-#define PING_PKT_S 64
+#define PING_PKT_S 1500
 // Automatic port number
 #define PING_SLEEP_RATE 1000000
 // buffer size in bytes for reading from file
@@ -13,6 +13,10 @@ struct ping_pkt {
     struct icmphdr hdr;
     char msg[PING_PKT_S-sizeof(struct icmphdr)];
 };
+
+//key for encryption used by AES
+const unsigned char key[16] = {"xbelko020000000"};
+
 
 
 unsigned short checksum(void *b, int len) {
@@ -32,16 +36,15 @@ unsigned short checksum(void *b, int len) {
 }
 
 // make a ping request
-void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
+void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, unsigned char *encrypted_msg) {
     int msg_count=0;
 
     struct ping_pkt pckt;
 
     //filling packet
-    char *message = "ahojahas";
     bzero(&pckt, sizeof(pckt));
-    bcopy(message, &pckt.msg, strlen(message));
-    printf("%s\n", pckt.msg);
+    bcopy(encrypted_msg, &pckt.msg, strlen((const char *) encrypted_msg));
+    printf("Sent msg: %s\n", pckt.msg);
     
     pckt.hdr.type = ICMP_ECHO;
     pckt.hdr.un.echo.id = getpid();
@@ -58,7 +61,9 @@ void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip) {
     printf("Message count: %d\n", msg_count);
 }
 
-void client_func(char *ip_addr) {
+
+void client_func(char *filename, char* ip_addr) {
+
     int sockfd;
     struct sockaddr_in addr_con;
 
@@ -77,8 +82,52 @@ void client_func(char *ip_addr) {
         printf("\nSocket file descriptor %d received\n", sockfd);
     }
 
-    send_ping(sockfd, &addr_con, ip_addr);
+    FILE *fptr;
+    if ((fptr = fopen(filename, "rb")) == NULL) {
+        printf("File %s loading failed!\n", filename);
+    }
+
+    /* Get the number of bytes */
+    fseek(fptr, 0L, SEEK_END);
+    long file_numbytes = ftell(fptr);
+    fseek(fptr, 0L, SEEK_SET);
+    
+    unsigned char encrypted_msg[PING_PKT_S-sizeof(struct icmphdr)] = {0};
+    int msg_offset = 0;
+    for (int i = 0; i < file_numbytes; i++) {
+        unsigned char buffer[BUFFER_SIZE] = {0};
+        int count = fread(buffer, 1, BUFFER_SIZE, fptr);
+
+
+        unsigned char encrypted[BUFFER_SIZE] = {0};
+        AES_KEY encrypt_key;
+        AES_set_encrypt_key(key, 128, &encrypt_key);
+        AES_encrypt((const unsigned char *) buffer, encrypted, &encrypt_key);
+
+        unsigned char decrypted[BUFFER_SIZE] = {0};
+        AES_KEY decrypt_key;
+        AES_set_decrypt_key(key, 128, &decrypt_key);
+        AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
+        
+        for (int j = 0; j < 16; j++) {
+            encrypted_msg[msg_offset] = decrypted[j];
+            msg_offset++;
+        }
+
+        if (msg_offset >= 1488) {
+            send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
+            *encrypted_msg = {0};
+            msg_offset = 0;
+        }
+
+        i += BUFFER_SIZE;
+    }
+    send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
+
+    fclose(fptr);
+
 }
+
 
 int main(int argc, char *argv[]) {
 
@@ -87,30 +136,8 @@ int main(int argc, char *argv[]) {
     //     return 0;
     // }
 
-    FILE *fptr;
-    if ((fptr = fopen(argv[1], "rb")) == NULL) {
-        printf("File %s loading failed!\n", argv[1]);
-    }
-    
-    /* Get the number of bytes */
-    fseek(fptr, 0L, SEEK_END);
-    long file_numbytes = ftell(fptr);
-    fseek(fptr, 0L, SEEK_SET);
-    
-    for (int i = 0; i <= file_numbytes; i++) {
-        unsigned char buffer[BUFFER_SIZE+1] = {0};
-        int count = fread(buffer, 1, BUFFER_SIZE, fptr);
-        printf("Data read from file: %s \n", buffer);
-        printf("Elements read: %d\n", count);
-        i += BUFFER_SIZE;
-    }
-    
-    fclose(fptr);
 
+    client_func(argv[1], argv[2]);
     
-    char *ip_addr = argv[2];
-
-    client_func(ip_addr);
-
     return 0;
 }

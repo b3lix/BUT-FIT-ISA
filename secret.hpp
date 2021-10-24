@@ -6,3 +6,7 @@
 #include <string.h>
 #include <netinet/ip_icmp.h>
 #include <signal.h>
+#include <openssl/aes.h>
+#include <iostream>
+
+using namespace std;
