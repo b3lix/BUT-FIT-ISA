@@ -18,7 +18,6 @@ struct ping_pkt {
 const unsigned char key[16] = {"xbelko020000000"};
 
 
-
 unsigned short checksum(void *b, int len) {
     unsigned short *buf = b;
     unsigned int sum=0;
@@ -35,7 +34,7 @@ unsigned short checksum(void *b, int len) {
     return result;
 }
 
-// make a ping request
+
 void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, unsigned char *encrypted_msg) {
     int msg_count=0;
 
@@ -69,8 +68,7 @@ void client_func(char *filename, char* ip_addr) {
 
     addr_con.sin_family = AF_INET;
     addr_con.sin_addr.s_addr = inet_addr(ip_addr);
-    addr_con.sin_port = 0;
-    memset(&addr_con.sin_zero, 0, sizeof (addr_con.sin_zero));
+    memset(&addr_con.sin_zero, 0, sizeof(addr_con.sin_zero));
 
     //socket()
     sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -85,6 +83,7 @@ void client_func(char *filename, char* ip_addr) {
     FILE *fptr;
     if ((fptr = fopen(filename, "rb")) == NULL) {
         printf("File %s loading failed!\n", filename);
+        exit(1);
     }
 
     /* Get the number of bytes */
@@ -98,19 +97,18 @@ void client_func(char *filename, char* ip_addr) {
         unsigned char buffer[BUFFER_SIZE] = {0};
         int count = fread(buffer, 1, BUFFER_SIZE, fptr);
 
-
         unsigned char encrypted[BUFFER_SIZE] = {0};
         AES_KEY encrypt_key;
         AES_set_encrypt_key(key, 128, &encrypt_key);
         AES_encrypt((const unsigned char *) buffer, encrypted, &encrypt_key);
 
-        unsigned char decrypted[BUFFER_SIZE] = {0};
-        AES_KEY decrypt_key;
-        AES_set_decrypt_key(key, 128, &decrypt_key);
-        AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
+        // unsigned char decrypted[BUFFER_SIZE] = {0};
+        // AES_KEY decrypt_key;
+        // AES_set_decrypt_key(key, 128, &decrypt_key);
+        // AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
         
         for (int j = 0; j < 16; j++) {
-            encrypted_msg[msg_offset] = decrypted[j];
+            encrypted_msg[msg_offset] = encrypted[j];
             msg_offset++;
         }
 
@@ -125,19 +123,45 @@ void client_func(char *filename, char* ip_addr) {
     send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
 
     fclose(fptr);
+}
 
+
+void server_func() {
+    cout << "server" << endl;
 }
 
 
 int main(int argc, char *argv[]) {
 
-    // if(argc!=2) {
-    //     printf("\nFormat %s <address>\n", argv[0]);
-    //     return 0;
-    // }
+    int opt;
+    char *optstr = "r:s:l";
+    char *filename, *ip_addr;
+    bool server_mode = false;
 
+    while ((opt = getopt(argc, argv, optstr)) != EOF) {
+        switch (opt) {
+        case 'r':
+            filename = optarg;
+            break;
+        case 's':
+            ip_addr = optarg;
+            break;
+        case 'l':
+            server_mode = true;
+            break;
+        default:
+            cerr << "help" <<  endl;
+            exit(1);
+            break;
+        }
+    }
 
-    client_func(argv[1], argv[2]);
-    
+    if (server_mode) {
+        server_func();
+    }
+    else {
+        client_func(filename, ip_addr);
+    }
+
     return 0;
 }
