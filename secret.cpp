@@ -2,7 +2,7 @@
 
 // Define the Packet Constants
 // ping packet size
-#define PING_PKT_S 1500
+#define PING_PKT_S 1400
 // Automatic port number
 #define PING_SLEEP_RATE 1000000
 // buffer size in bytes for reading from file
@@ -102,17 +102,17 @@ void client_func(char *filename, char* ip_addr) {
         AES_set_encrypt_key(key, 128, &encrypt_key);
         AES_encrypt((const unsigned char *) buffer, encrypted, &encrypt_key);
 
-        // unsigned char decrypted[BUFFER_SIZE] = {0};
-        // AES_KEY decrypt_key;
-        // AES_set_decrypt_key(key, 128, &decrypt_key);
-        // AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
+        unsigned char decrypted[BUFFER_SIZE] = {0};
+        AES_KEY decrypt_key;
+        AES_set_decrypt_key(key, 128, &decrypt_key);
+        AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
         
         for (int j = 0; j < 16; j++) {
-            encrypted_msg[msg_offset] = encrypted[j];
+            encrypted_msg[msg_offset] = decrypted[j];
             msg_offset++;
         }
 
-        if (msg_offset >= 1488) {
+        if (msg_offset >= 1392) {
             send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
             *encrypted_msg = {0};
             msg_offset = 0;
@@ -128,6 +128,31 @@ void client_func(char *filename, char* ip_addr) {
 
 void server_func() {
     cout << "server" << endl;
+
+    struct sockaddr_in r_addr;
+    struct ping_pkt pckt;
+    int sockfd;
+    //socket()
+	sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+	if(sockfd<0) {
+		printf("\nSocket file descriptor not received!!\n");
+		exit(1);
+	}
+	else {
+		printf("\nSocket file descriptor %d received\n", sockfd);
+    }
+
+    //receive packet
+	int addr_len=sizeof(r_addr);
+
+	if (recvfrom(sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*)&r_addr, &addr_len) <= 0) {
+		printf("\nPacket receive failed!\n");
+	}
+    // spravit to radsej cez pcap, netreba potom riesit ipv4 a ipv6 osobitne
+	else {
+		cout << "received: " << endl;
+        cout << pckt.msg << endl;
+	}
 }
 
 
