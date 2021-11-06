@@ -36,19 +36,16 @@ unsigned short checksum(void *b, int len) {
 
 
 void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, unsigned char *encrypted_msg) {
-    int msg_count=0;
 
     struct ping_pkt pckt;
 
     //filling packet
     bzero(&pckt, sizeof(pckt));
     bcopy(encrypted_msg, &pckt.msg, strlen((const char *) encrypted_msg));
-    printf("Sent msg: %s\n", pckt.msg);
     
     pckt.hdr.type = ICMP_ECHO;
     pckt.hdr.un.echo.id = getpid();
 
-    pckt.hdr.un.echo.sequence = msg_count++;
     pckt.hdr.checksum = checksum(&pckt, sizeof(pckt));
 
     //send packet
@@ -56,8 +53,6 @@ void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, un
         printf("\nPacket Sending Failed!\n");
         exit(1);
     }
-
-    printf("Message count: %d\n", msg_count);
 }
 
 
@@ -93,7 +88,7 @@ void client_func(char *filename, char* ip_addr) {
     
     unsigned char encrypted_msg[PING_PKT_S-sizeof(struct icmphdr)] = {0};
     int msg_offset = 0;
-    for (int i = 0; i < file_numbytes; i++) {
+    for (int i = 0; i < file_numbytes; i += BUFFER_SIZE) {
         unsigned char buffer[BUFFER_SIZE] = {0};
         int count = fread(buffer, 1, BUFFER_SIZE, fptr);
 
@@ -101,14 +96,9 @@ void client_func(char *filename, char* ip_addr) {
         AES_KEY encrypt_key;
         AES_set_encrypt_key(key, 128, &encrypt_key);
         AES_encrypt((const unsigned char *) buffer, encrypted, &encrypt_key);
-
-        unsigned char decrypted[BUFFER_SIZE] = {0};
-        AES_KEY decrypt_key;
-        AES_set_decrypt_key(key, 128, &decrypt_key);
-        AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
         
-        for (int j = 0; j < 16; j++) {
-            encrypted_msg[msg_offset] = decrypted[j];
+        for (int j = 0; j < BUFFER_SIZE; j++) {
+            encrypted_msg[msg_offset] = encrypted[j];
             msg_offset++;
         }
 
@@ -117,8 +107,6 @@ void client_func(char *filename, char* ip_addr) {
             *encrypted_msg = {0};
             msg_offset = 0;
         }
-
-        i += BUFFER_SIZE;
     }
     send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
 
@@ -129,30 +117,73 @@ void client_func(char *filename, char* ip_addr) {
 void server_func() {
     cout << "server" << endl;
 
-    struct sockaddr_in r_addr;
-    struct ping_pkt pckt;
-    int sockfd;
-    //socket()
-	sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-	if(sockfd<0) {
-		printf("\nSocket file descriptor not received!!\n");
+    pcap_t *handle;
+    char errbuf[100];
+
+    pcap_if_t *alldevsp, *device;
+
+    handle = pcap_open_live(NULL, 65536, 1, 1000, errbuf);
+    if (handle == NULL) {
+		fprintf(stderr, "Couldn't open device: %s\n", errbuf);
 		exit(1);
 	}
-	else {
-		printf("\nSocket file descriptor %d received\n", sockfd);
+
+    pcap_loop(handle, -1, server_process_packet, NULL);
+
+}
+
+void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *buffer) {
+    int size = header->len;
+
+    struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr) + 2);
+    
+    if (iph->protocol == 1) {
+        unsigned short iphdrlen;
+        iphdrlen = iph->ihl * 4;
+
+        struct icmphdr *icmph = (struct icmphdr *)(buffer + iphdrlen  + sizeof(struct ethhdr) + 2);
+	    int header_size =  sizeof(struct ethhdr) + 2 + iphdrlen + sizeof(icmph);
+
+        const u_char *data = buffer + header_size;
+        int datalen = strlen((const char *) data);
+        int data_offset = 0;
+
+        unsigned char decrypted_msg[datalen] = {0};
+        int msg_offset = 0;
+        for (int i = 0; i < datalen; i++) {
+            unsigned char buffer[BUFFER_SIZE] = {0};
+
+            for (int j = 0; j < BUFFER_SIZE && data_offset < datalen; j++) {
+                buffer[j] = data[data_offset];
+                data_offset++;
+            }
+
+            unsigned char decrypted[BUFFER_SIZE] = {0};
+            AES_KEY decrypt_key;
+            AES_set_decrypt_key(key, 128, &decrypt_key);
+            AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
+
+            for (int j = 0; j < 16 && msg_offset < datalen; j++) {
+                decrypted_msg[msg_offset] = decrypted[j];
+                msg_offset++;
+            }
+
+        }
+
+        cout << decrypted_msg << endl;
+
+        // FILE *fptr;
+        // char *filename = "testing.txt";
+
+        // if ((fptr = fopen(filename, "wb")) == NULL) {
+        //     printf("File %s opening failed!\n", filename);
+        //     exit(1);
+        // }
+
+        // fprintf(fptr, (const char *) decrypted_msg);
+
+        // fclose(fptr);
     }
-
-    //receive packet
-	int addr_len=sizeof(r_addr);
-
-	if (recvfrom(sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*)&r_addr, &addr_len) <= 0) {
-		printf("\nPacket receive failed!\n");
-	}
-    // spravit to radsej cez pcap, netreba potom riesit ipv4 a ipv6 osobitne
-	else {
-		cout << "received: " << endl;
-        cout << pckt.msg << endl;
-	}
 }
 
 
