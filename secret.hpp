@@ -16,3 +16,4 @@ using namespace std;
 void server_process_packet(u_char *, const struct pcap_pkthdr *, const u_char *);
 void print_icmp_packet(const u_char * , int );
 void PrintData (const u_char * , int);
+int icmp_reply(int sockfd);

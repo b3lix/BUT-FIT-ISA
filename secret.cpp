@@ -2,7 +2,7 @@
 
 // Define the Packet Constants
 // ping packet size
-#define PING_PKT_S 1400
+#define PING_PKT_SIZE 1400
 // Automatic port number
 #define PING_SLEEP_RATE 1000000
 // buffer size in bytes for reading from file
@@ -11,11 +11,11 @@
 // ping packet structure
 struct ping_pkt {
     struct icmphdr hdr;
-    char msg[PING_PKT_S-sizeof(struct icmphdr)];
+    char msg[PING_PKT_SIZE-sizeof(struct icmphdr)];
 };
 
 //key for encryption used by AES
-const unsigned char key[16] = {"xbelko020000000"};
+const unsigned char *key = "xbelko02";
 
 
 unsigned short checksum(void *b, int len) {
@@ -35,13 +35,13 @@ unsigned short checksum(void *b, int len) {
 }
 
 
-void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, unsigned char *encrypted_msg) {
+void send_ping(int ping_sockfd, struct sockaddr_in *ping_addr, char *ping_ip, unsigned char *encrypted_msg, int msg_size) {
 
     struct ping_pkt pckt;
 
     //filling packet
     bzero(&pckt, sizeof(pckt));
-    bcopy(encrypted_msg, &pckt.msg, strlen((const char *) encrypted_msg));
+    bcopy(encrypted_msg, &pckt.msg, msg_size);
     
     pckt.hdr.type = ICMP_ECHO;
     pckt.hdr.un.echo.id = getpid();
@@ -86,8 +86,16 @@ void client_func(char *filename, char* ip_addr) {
     long file_numbytes = ftell(fptr);
     fseek(fptr, 0L, SEEK_SET);
     
-    unsigned char encrypted_msg[PING_PKT_S-sizeof(struct icmphdr)] = {0};
+    unsigned char encrypted_msg[PING_PKT_SIZE-sizeof(struct icmphdr)] = {0};
+    int msg_tag_len = 8;
+    unsigned char msg_tag[msg_tag_len] = "xbelko02";
     int msg_offset = 0;
+    //copy msg tag
+    for (int j = 0; j < msg_tag_len; j++) {
+        encrypted_msg[msg_offset] = msg_tag[j];
+        msg_offset++;
+    }
+
     for (int i = 0; i < file_numbytes; i += BUFFER_SIZE) {
         unsigned char buffer[BUFFER_SIZE] = {0};
         int count = fread(buffer, 1, BUFFER_SIZE, fptr);
@@ -96,23 +104,57 @@ void client_func(char *filename, char* ip_addr) {
         AES_KEY encrypt_key;
         AES_set_encrypt_key(key, 128, &encrypt_key);
         AES_encrypt((const unsigned char *) buffer, encrypted, &encrypt_key);
-        
+
+        unsigned char decrypted[BUFFER_SIZE] = {0};
+        AES_KEY decrypt_key;
+        AES_set_decrypt_key(key, 128, &decrypt_key);
+        AES_decrypt((const unsigned char *) encrypted, decrypted, &decrypt_key);
+
         for (int j = 0; j < BUFFER_SIZE; j++) {
-            encrypted_msg[msg_offset] = encrypted[j];
+            encrypted_msg[msg_offset] = decrypted[j];
             msg_offset++;
         }
 
-        if (msg_offset >= 1392) {
-            send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
+        if (msg_offset >= (1392 - msg_tag_len)) {
+            send_ping(sockfd, &addr_con, ip_addr, encrypted_msg, msg_offset);
+            if (!(icmp_reply)) {
+                cerr << "Error: Echo Reply not received!" << endl;
+                exit(1);
+            }
+            
             *encrypted_msg = {0};
             msg_offset = 0;
+            for (int j = 0; j < msg_tag_len; j++) {
+                encrypted_msg[msg_offset] = msg_tag[j];
+                msg_offset++;
+            }
+            msg_offset = msg_tag_len;
         }
     }
-    send_ping(sockfd, &addr_con, ip_addr, encrypted_msg);
+    send_ping(sockfd, &addr_con, ip_addr, encrypted_msg, msg_offset);
+    if (!(icmp_reply)) {
+        cerr << "Error: Echo Reply not received!" << endl;
+        exit(1);
+    }
 
     fclose(fptr);
 }
 
+int icmp_reply(int sockfd) {
+    struct sockaddr_in r_addr;
+    struct ping_pkt pckt;
+
+    //receive packet
+	unsigned int addr_len=sizeof(r_addr);
+
+	if (recvfrom(sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*)&r_addr, &addr_len) <= 0) {
+		printf("\nPacket receive failed!\n");
+        return 0;
+	}
+	else {
+        return 1;
+	}
+}
 
 void server_func() {
     cout << "server" << endl;
@@ -120,16 +162,12 @@ void server_func() {
     pcap_t *handle;
     char errbuf[100];
 
-    pcap_if_t *alldevsp, *device;
-
     handle = pcap_open_live(NULL, 65536, 1, 1000, errbuf);
     if (handle == NULL) {
 		fprintf(stderr, "Couldn't open device: %s\n", errbuf);
 		exit(1);
 	}
-
     pcap_loop(handle, -1, server_process_packet, NULL);
-
 }
 
 void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *buffer) {
@@ -144,45 +182,60 @@ void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const
         struct icmphdr *icmph = (struct icmphdr *)(buffer + iphdrlen  + sizeof(struct ethhdr) + 2);
 	    int header_size =  sizeof(struct ethhdr) + 2 + iphdrlen + sizeof(icmph);
 
-        const u_char *data = buffer + header_size;
-        int datalen = strlen((const char *) data);
-        int data_offset = 0;
+        if (((int) icmph->type) == 8) {
 
-        unsigned char decrypted_msg[datalen] = {0};
-        int msg_offset = 0;
-        for (int i = 0; i < datalen; i++) {
-            unsigned char buffer[BUFFER_SIZE] = {0};
+            const u_char *data = buffer + header_size;
+            int datalen = 136;
+            int data_offset = 0;
+            
+            int msg_tag_len = 8;
+            unsigned char msg_tag[msg_tag_len] = "xbelko02";
 
-            for (int j = 0; j < BUFFER_SIZE && data_offset < datalen; j++) {
-                buffer[j] = data[data_offset];
+            unsigned char pkt_msg_tag[msg_tag_len] = {0};
+            for (int j = 0; j < msg_tag_len; j++) {
+                pkt_msg_tag[data_offset] = data[j];
                 data_offset++;
             }
+            //add null after string
+            msg_tag[msg_tag_len] = 0;
+            pkt_msg_tag[msg_tag_len] = 0;
 
-            unsigned char decrypted[BUFFER_SIZE] = {0};
-            AES_KEY decrypt_key;
-            AES_set_decrypt_key(key, 128, &decrypt_key);
-            AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
+            if (!(strcmp((const char *) msg_tag, (const char *) pkt_msg_tag))) {
+                unsigned char decrypted_msg[datalen] = {0};
+                int msg_offset = 0;
 
-            for (int j = 0; j < 16 && msg_offset < datalen; j++) {
-                decrypted_msg[msg_offset] = decrypted[j];
-                msg_offset++;
+                for (int i = 0; i < datalen - msg_tag_len; i += BUFFER_SIZE) {
+                    unsigned char buffer[BUFFER_SIZE] = {0};
+
+                    for (int j = 0; j < BUFFER_SIZE && data_offset < datalen; j++) {
+                        buffer[j] = data[data_offset];
+                        data_offset++;
+                    }
+
+                    // unsigned char decrypted[BUFFER_SIZE] = {0};
+                    // AES_KEY decrypt_key;
+                    // AES_set_decrypt_key(key, 128, &decrypt_key);
+                    // AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
+
+                    for (int j = 0; j < BUFFER_SIZE && msg_offset < datalen; j++) {
+                        decrypted_msg[msg_offset] = buffer[j];
+                        msg_offset++;
+                    }
+                }
+
+                FILE *fptr;
+                char *filename = "pixel.png";
+
+                if ((fptr = fopen(filename, "ab")) == NULL) {
+                    printf("File %s opening failed!\n", filename);
+                    exit(1);
+                }
+
+                fwrite(decrypted_msg, sizeof(unsigned char), 119, fptr);
+
+                fclose(fptr);
             }
-
         }
-
-        cout << decrypted_msg << endl;
-
-        // FILE *fptr;
-        // char *filename = "testing.txt";
-
-        // if ((fptr = fopen(filename, "wb")) == NULL) {
-        //     printf("File %s opening failed!\n", filename);
-        //     exit(1);
-        // }
-
-        // fprintf(fptr, (const char *) decrypted_msg);
-
-        // fclose(fptr);
     }
 }
 
