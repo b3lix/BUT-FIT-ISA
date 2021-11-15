@@ -8,8 +8,13 @@
 #include <signal.h>
 #include <openssl/aes.h>
 #include <iostream>
+#include <sstream>
 #include <pcap.h>
-#include<net/ethernet.h>
+#include <net/ethernet.h>
+#include <libgen.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 using namespace std;
 
