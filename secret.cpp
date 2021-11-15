@@ -1,10 +1,7 @@
 #include "secret.hpp"
 
-// Define the Packet Constants
 // ping packet size
 #define PING_PKT_SIZE 1392
-// Automatic port number
-#define PING_SLEEP_RATE 1000000
 // buffer size in bytes for reading from file
 #define BUFFER_SIZE 16
 
@@ -22,6 +19,7 @@ string FILE_NAME;
 bool SECOND_PKT_CAME = false;
 
 
+// https://www.geeksforgeeks.org/ping-in-c/
 unsigned short checksum(void *b, int len) {
     unsigned short *buf = b;
     unsigned int sum=0;
@@ -39,6 +37,7 @@ unsigned short checksum(void *b, int len) {
 }
 
 
+// https://www.geeksforgeeks.org/ping-in-c/
 void send_ping(int ping_sockfd, struct addrinfo *ipinfo, unsigned char *encrypted_msg, int msg_size) {
 
     struct ping_pkt pckt;
@@ -50,7 +49,6 @@ void send_ping(int ping_sockfd, struct addrinfo *ipinfo, unsigned char *encrypte
     pckt.hdr.type = ICMP_ECHO;
     pckt.hdr.checksum = checksum(&pckt, sizeof(pckt));
 
-    //send packet
     if (sendto(ping_sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*) (ipinfo->ai_addr), ipinfo->ai_addrlen) <= 0) {
         printf("\nPacket Sending Failed!\n");
         exit(1);
@@ -60,6 +58,8 @@ void send_ping(int ping_sockfd, struct addrinfo *ipinfo, unsigned char *encrypte
 
 void client_func(char *filename, char* ip_addr) {
 
+    // https://beej.us/guide/bgnet/html/#client-server-background
+    // https://man7.org/linux/man-pages/man3/getaddrinfo.3.html
     struct addrinfo hints, *ipinfo;
     memset(&hints, 0, sizeof(hints));
     char *host = ip_addr;
@@ -75,7 +75,7 @@ void client_func(char *filename, char* ip_addr) {
 
     int sockfd;
     int protocol = ipinfo->ai_family == AF_INET ? IPPROTO_ICMP : IPPROTO_ICMPV6;
-    //socket()
+
     sockfd = socket(ipinfo->ai_family, ipinfo->ai_socktype, protocol);
     if(sockfd<0) {
         printf("\nSocket file descriptor not received!!\n");
@@ -91,7 +91,7 @@ void client_func(char *filename, char* ip_addr) {
         exit(1);
     }
 
-    /* Get the number of bytes */
+    // get the number of bytes
     fseek(fptr, 0L, SEEK_END);
     long file_numbytes = ftell(fptr);
     fseek(fptr, 0L, SEEK_SET);
@@ -116,7 +116,7 @@ void client_func(char *filename, char* ip_addr) {
     int msg_tag_len = 8;
     unsigned char msg_tag[msg_tag_len] = "xbelko02";
     int msg_offset = 0;
-    //copy msg tag
+    // copy msg tag
     for (int j = 0; j < msg_tag_len; j++) {
         encrypted_msg[msg_offset] = msg_tag[j];
         msg_offset++;
@@ -126,6 +126,7 @@ void client_func(char *filename, char* ip_addr) {
         unsigned char buffer[BUFFER_SIZE] = {0};
         int count = fread(buffer, 1, BUFFER_SIZE, fptr);
 
+        // https://man.openbsd.org/AES_encrypt.3#AES_encrypt
         unsigned char encrypted[BUFFER_SIZE] = {0};
         AES_KEY encrypt_key;
         AES_set_encrypt_key(KEY, 128, &encrypt_key);
@@ -162,11 +163,12 @@ void client_func(char *filename, char* ip_addr) {
     fclose(fptr);
 }
 
+
+// https://www.geeksforgeeks.org/ping-in-c/
 int icmp_reply(int sockfd) {
     struct sockaddr_in r_addr;
     struct ping_pkt pckt;
 
-    //receive packet
 	unsigned int addr_len=sizeof(r_addr);
 
 	if (recvfrom(sockfd, &pckt, sizeof(pckt), 0, (struct sockaddr*) &r_addr, &addr_len) <= 0) {
@@ -178,28 +180,49 @@ int icmp_reply(int sockfd) {
 	}
 }
 
+// from: https://www.devdungeon.com/content/using-libpcap-c
 void server_func() {
     cout << "server" << endl;
 
     pcap_t *handle;
     char errbuf[100];
 
+    struct bpf_program filter;
+    char filter_exp[] = "icmp[icmptype] = icmp-echo or icmp6[icmp6type] = icmp6-echo";
+
     handle = pcap_open_live(NULL, 65536, 1, 1000, errbuf);
     if (handle == NULL) {
 		fprintf(stderr, "Couldn't open device: %s\n", errbuf);
 		exit(1);
 	}
+
+    if (pcap_compile(handle, &filter, filter_exp, 0, PCAP_NETMASK_UNKNOWN) == -1) {
+        fprintf(stderr, "Bad filter - %s\n", pcap_geterr(handle));
+        exit(1);
+    }
+    if (pcap_setfilter(handle, &filter) == -1) {
+        fprintf(stderr, "Error setting filter - %s\n", pcap_geterr(handle));
+        exit(1);
+    }
+
     pcap_loop(handle, -1, server_process_packet, NULL);
 }
 
 void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *buffer) {
+    // https://www.binarytides.com/packet-sniffer-code-c-libpcap-linux-sockets/
     int size = header->len;
 
     struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr) + 2);
 
     if (iph->protocol == 1) {
         unsigned short iphdrlen;
-        iphdrlen = iph->ihl * 4;
+
+        if (iph->version == 4) {
+            iphdrlen = iph->ihl * 4;
+        }
+        else {
+            iphdrlen = 40;
+        }
 
         struct icmphdr *icmph = (struct icmphdr *)(buffer + iphdrlen  + sizeof(struct ethhdr) + 2);
 	    int header_size = sizeof(struct ethhdr) + 2 + iphdrlen + sizeof(icmph);
@@ -236,6 +259,15 @@ void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const
                 string second_pkt = (const char *) data;
                 second_pkt.erase(0, 8);
                 FILE_NAME = second_pkt;
+
+                FILE *fptr;
+                const char *filename = FILE_NAME.c_str();
+
+                if ((fptr = fopen(filename, "wb")) == NULL) {
+                    printf("File %s opening failed!\n", filename);
+                    exit(1);
+                }
+                fclose(fptr);
             }
 
             if (!(strcmp((const char *) msg_tag, (const char *) pkt_msg_tag)) && FIRST_PKT_CAME && SECOND_PKT_CAME) {
@@ -244,56 +276,56 @@ void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const
                 AES_set_decrypt_key(KEY, 128, &decrypt_key);
             
                 if (FILE_SIZE < 1384) {
-                    if (FILE_SIZE != 0) {
-                        int data_size = FILE_SIZE;
-                        FILE_SIZE = 0;
-                        unsigned char decrypted_msg[data_size] = {0};
-                        int msg_offset = 0;
+                    int data_size = FILE_SIZE;
+                    FILE_SIZE = data_size % BUFFER_SIZE;
+                    unsigned char decrypted_msg[data_size] = {0};
+                    int msg_offset = 0;
 
-                        int iterations = data_size / BUFFER_SIZE;
+                    int iterations = data_size / BUFFER_SIZE;
 
-                        for (int i = 0; i < iterations; i++) {
-                            unsigned char buffer[BUFFER_SIZE] = {0};
-
-                            for (int j = 0; j < BUFFER_SIZE && data_offset < data_size; j++) {
-                                buffer[j] = data[data_offset];
-                                data_offset++;
-                            }
-
-                            unsigned char decrypted[BUFFER_SIZE] = {0};
-                            AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
-
-                            for (int j = 0; j < BUFFER_SIZE && msg_offset < data_size; j++) {
-                                decrypted_msg[msg_offset] = decrypted[j];
-                                msg_offset++;
-                            }
-                        }
-
+                    for (int i = 0; i < iterations; i++) {
                         unsigned char buffer[BUFFER_SIZE] = {0};
+
                         for (int j = 0; j < BUFFER_SIZE; j++) {
                             buffer[j] = data[data_offset];
                             data_offset++;
                         }
 
+                        // https://man.openbsd.org/AES_encrypt.3#AES_encrypt
                         unsigned char decrypted[BUFFER_SIZE] = {0};
                         AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
-                        
+
                         for (int j = 0; j < BUFFER_SIZE && msg_offset < data_size; j++) {
                             decrypted_msg[msg_offset] = decrypted[j];
                             msg_offset++;
                         }
-
-                        FILE *fptr;
-                        const char *filename = FILE_NAME.c_str();
-
-                        if ((fptr = fopen(filename, "ab")) == NULL) {
-                            printf("File %s opening failed!\n", filename);
-                            exit(1);
-                        }
-                        fwrite(decrypted_msg, sizeof(unsigned char), data_size, fptr);
-
-                        fclose(fptr);
                     }
+
+                    unsigned char buffer[BUFFER_SIZE] = {0};
+                    for (int j = 0; j < BUFFER_SIZE; j++) {
+                        buffer[j] = data[data_offset];
+                        data_offset++;
+                    }
+
+                    // https://man.openbsd.org/AES_encrypt.3#AES_encrypt
+                    unsigned char decrypted[BUFFER_SIZE] = {0};
+                    AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
+
+                    for (int j = 0; j < BUFFER_SIZE && msg_offset < data_size; j++) {
+                        decrypted_msg[msg_offset] = decrypted[j];
+                        msg_offset++;
+                    }
+
+                    FILE *fptr;
+                    const char *filename = FILE_NAME.c_str();
+
+                    if ((fptr = fopen(filename, "ab")) == NULL) {
+                        printf("File %s opening failed!\n", filename);
+                        exit(1);
+                    }
+                    fwrite(decrypted_msg, sizeof(unsigned char), data_size, fptr);
+
+                    fclose(fptr);
                 }
                 else {
                     int data_size = 1384;
@@ -310,6 +342,7 @@ void server_process_packet(u_char *args, const struct pcap_pkthdr *header, const
                             data_offset++;
                         }
 
+                        // https://man.openbsd.org/AES_encrypt.3#AES_encrypt
                         unsigned char decrypted[BUFFER_SIZE] = {0};
                         AES_decrypt((const unsigned char *) buffer, decrypted, &decrypt_key);
 
@@ -341,21 +374,25 @@ int main(int argc, char *argv[]) {
     int opt;
     char *optstr = "r:s:l";
     char *filename, *ip_addr;
+    bool filename_ok = false;
+    bool ip_addr_ok = false;
     bool server_mode = false;
 
     while ((opt = getopt(argc, argv, optstr)) != EOF) {
         switch (opt) {
         case 'r':
             filename = optarg;
+            filename_ok = true;
             break;
         case 's':
             ip_addr = optarg;
+            ip_addr_ok = true;
             break;
         case 'l':
             server_mode = true;
             break;
         default:
-            cerr << "help" <<  endl;
+            cerr << "HELP" <<  endl;
             exit(1);
             break;
         }
@@ -365,6 +402,14 @@ int main(int argc, char *argv[]) {
         server_func();
     }
     else {
+        if (!filename_ok) {
+            cerr << "Missing argument -r (filename)!" <<  endl;
+            exit(1);
+        }
+        if (!ip_addr_ok) {
+            cerr << "Missing argument -s (ip address)!" <<  endl;
+            exit(1);
+        }
         client_func(filename, ip_addr);
     }
 
